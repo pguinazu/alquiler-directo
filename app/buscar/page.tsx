@@ -11,7 +11,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet"
 import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { Search, SlidersHorizontal, MapPin, Home, User, Phone, Mail } from "lucide-react"
+import { Search, SlidersHorizontal, MapPin, Home, User, Phone, Mail, X } from "lucide-react"
 import type { PropertyListing, SearchFilters } from "@/types"
 import { parseSearchQuery } from "@/lib/searchParser"
 import { searchListings } from "@/lib/api"
@@ -63,6 +63,13 @@ function BuscarContent() {
     setLoading(false)
   }
 
+  const handleClear = async () => {
+    setSearchText("")
+    setInterpretation("")
+    setFilters({})
+    await loadListings()
+  }
+
   const handleFilterChange = async (newFilters: SearchFilters) => {
     setFilters(newFilters)
     setLoading(true)
@@ -94,8 +101,19 @@ function BuscarContent() {
                 value={searchText}
                 onChange={(e) => setSearchText(e.target.value)}
                 onKeyDown={(e) => e.key === "Enter" && handleSearch()}
-                className="pl-10 h-12 text-base"
+                className="pl-10 pr-10 h-12 text-base"
               />
+              {searchText && (
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="absolute right-1 top-1/2 -translate-y-1/2 h-8 w-8 text-muted-foreground hover:text-foreground"
+                  onClick={handleClear}
+                  aria-label="Limpiar búsqueda"
+                >
+                  <X className="h-4 w-4" />
+                </Button>
+              )}
             </div>
             <Button onClick={handleSearch} size="lg" disabled={loading}>
               Buscar
@@ -225,6 +243,7 @@ function BuscarContent() {
                     src={
                       listing.images?.[0] ||
                       `/placeholder.svg?height=300&width=400&query=apartment+interior` ||
+                      "/placeholder.svg" ||
                       "/placeholder.svg"
                     }
                     alt={listing.propertyAddress}
@@ -312,6 +331,7 @@ function BuscarContent() {
                     src={
                       selectedListing.images?.[0] ||
                       `/placeholder.svg?height=400&width=600&query=apartment+interior` ||
+                      "/placeholder.svg" ||
                       "/placeholder.svg"
                     }
                     alt={selectedListing.propertyAddress}

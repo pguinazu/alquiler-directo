@@ -13,6 +13,7 @@ import { Building2 } from "lucide-react"
 import { createTenantUser, createOwnerUser } from "@/lib/api"
 import { useToast } from "@/hooks/use-toast"
 import Link from "next/link"
+import { signupEmailPassword, waitForAuthReady } from "@/lib/auth"
 
 export default function SignUpPage() {
   const router = useRouter()
@@ -28,8 +29,12 @@ export default function SignUpPage() {
     const email = formData.get("email") as string
     const phone = formData.get("phone") as string
     const address = formData.get("address") as string
+    const password = formData.get("password") as string
 
     try {
+      await signupEmailPassword(email, password)
+      await waitForAuthReady()
+
       const result = await createTenantUser({
         name,
         email,
@@ -38,24 +43,21 @@ export default function SignUpPage() {
         userType: "tenant",
       })
 
-      if (result.success) {
-        toast({
-          title: "Cuenta creada exitosamente",
-          description: "Ya podés iniciar sesión con tu email",
-        })
-        router.push("/login")
-      } else {
-        toast({
-          variant: "destructive",
-          title: "Error",
-          description: result.error || "Error al crear la cuenta",
-        })
+      if (!result.success) {
+        throw new Error(result.error || "Error al crear el perfil de inquilino")
       }
-    } catch (error) {
+
+      toast({
+        title: "Cuenta creada exitosamente",
+        description: "Ya podés iniciar sesión con tu email",
+      })
+
+      router.push("/login")
+    } catch (error: any) {
       toast({
         variant: "destructive",
         title: "Error",
-        description: "Ocurrió un error inesperado",
+        description: error?.message || "Ocurrió un error al crear la cuenta. Intentá nuevamente.",
       })
     } finally {
       setLoading(false)
@@ -71,39 +73,34 @@ export default function SignUpPage() {
     const email = formData.get("email") as string
     const phone = formData.get("phone") as string
     const address = formData.get("address") as string
+    const password = formData.get("password") as string
 
     try {
+      await signupEmailPassword(email, password)
+      await waitForAuthReady()
+
       const result = await createOwnerUser({
         name,
         email,
         phone,
         address,
-        userType: "landlord",
-        propertyAddress: "",
-        propertyTypeAndSize: "",
-        pricePeriodCurrency: "",
-        hasSalaryGuarantors: false,
-        hasLandlordGuarantors: "",
       })
 
-      if (result.success) {
-        toast({
-          title: "Cuenta creada exitosamente",
-          description: "Ya podés iniciar sesión con tu email",
-        })
-        router.push("/login")
-      } else {
-        toast({
-          variant: "destructive",
-          title: "Error",
-          description: result.error || "Error al crear la cuenta",
-        })
+      if (!result.success) {
+        throw new Error(result.error || "Error al crear el perfil de propietario")
       }
-    } catch (error) {
+
+      toast({
+        title: "Cuenta creada exitosamente",
+        description: "Ya podés iniciar sesión con tu email",
+      })
+
+      router.push("/login")
+    } catch (error: any) {
       toast({
         variant: "destructive",
         title: "Error",
-        description: "Ocurrió un error inesperado",
+        description: error?.message || "Ocurrió un error al crear la cuenta. Intentá nuevamente.",
       })
     } finally {
       setLoading(false)
@@ -128,6 +125,11 @@ export default function SignUpPage() {
         <Label htmlFor="address-tenant">Dirección actual</Label>
         <Input id="address-tenant" name="address" type="text" placeholder="Av. Corrientes 1234" required />
       </div>
+      <div className="space-y-2">
+        <Label htmlFor="password-tenant">Contraseña</Label>
+        <Input id="password-tenant" name="password" type="password" placeholder="********" required minLength={6} />
+      </div>
+
       <Button type="submit" className="w-full" disabled={loading}>
         {loading ? "Creando cuenta..." : "Crear cuenta de Inquilino"}
       </Button>
@@ -152,6 +154,11 @@ export default function SignUpPage() {
         <Label htmlFor="address-owner">Dirección</Label>
         <Input id="address-owner" name="address" type="text" placeholder="Av. Santa Fe 1234" required />
       </div>
+      <div className="space-y-2">
+        <Label htmlFor="password-owner">Contraseña</Label>
+        <Input id="password-owner" name="password" type="password" placeholder="********" required minLength={6} />
+      </div>
+
       <Button type="submit" className="w-full" disabled={loading}>
         {loading ? "Creando cuenta..." : "Crear cuenta de Propietario"}
       </Button>
@@ -165,7 +172,7 @@ export default function SignUpPage() {
           <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-full bg-primary">
             <Building2 className="h-6 w-6 text-primary-foreground" />
           </div>
-          <CardTitle className="text-2xl">Crear cuenta en InmoApp</CardTitle>
+          <CardTitle className="text-2xl">Crear cuenta en Alquiler Directo</CardTitle>
           <CardDescription>Elegí tu tipo de cuenta para registrarte</CardDescription>
         </CardHeader>
         <CardContent>

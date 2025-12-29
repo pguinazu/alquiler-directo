@@ -13,7 +13,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Badge } from "@/components/ui/badge"
-import { Plus, Edit, Trash2, Pause, Play, MapPin } from "lucide-react"
+import { Plus, Edit, Trash2, Pause, Play, MapPin, X } from "lucide-react"
 import type { PropertyListing } from "@/types"
 import { createListing, updateListing, deleteListing, getCurrentUser, getMyListings } from "@/lib/api"
 import { useToast } from "@/hooks/use-toast"
@@ -30,6 +30,8 @@ function MisPublicacionesContent() {
   const [listings, setListings] = useState<PropertyListing[]>([])
   const [showCreateDialog, setShowCreateDialog] = useState(false)
   const [editingListing, setEditingListing] = useState<PropertyListing | null>(null)
+  const [selectedFiles, setSelectedFiles] = useState<File[]>([])
+  const [uploadingImages, setUploadingImages] = useState(false)
   const { toast } = useToast()
   const user = getCurrentUser()
 
@@ -57,32 +59,76 @@ function MisPublicacionesContent() {
     e.preventDefault()
     const formData = new FormData(e.currentTarget)
 
-    const listingData = {
-      ownerName: user?.name || "",
-      ownerEmail: user?.email || "",
-      ownerPhone: formData.get("phone") as string,
-      propertyAddress: formData.get("propertyAddress") as string,
-      propertyTypeAndSize: formData.get("propertyTypeAndSize") as string,
-      pricePeriodCurrency: formData.get("pricePeriodCurrency") as string,
-      hasSalaryGuarantors: formData.get("hasSalaryGuarantors") === "true",
-      guarantorsMinSalary: formData.get("guarantorsMinSalary") as string,
-      petsQuantitySizeAndType: formData.get("petsQuantitySizeAndType") as string,
-      hasLandlordGuarantors: formData.get("hasLandlordGuarantors") as string,
-      status: "published" as const,
-      description: formData.get("description") as string,
-    }
+    try {
+      const uploadedImageUrls: string[] = []
 
-    if (editingListing) {
-      await updateListing(editingListing.id, listingData)
-      toast({ title: "Publicación actualizada" })
-    } else {
-      await createListing(listingData)
-      toast({ title: "Publicación creada exitosamente" })
-    }
+      if (selectedFiles.length > 0) {
+        setUploadingImages(true)
+        console.log("[v0] Uploading", selectedFiles.length, "images to Vercel Blob")
 
-    setShowCreateDialog(false)
-    setEditingListing(null)
-    loadListings()
+        for (const file of selectedFiles) {
+          const uploadFormData = new FormData()
+          uploadFormData.append("file", file)
+
+          const response = await fetch("/api/upload", {
+            method: "POST",
+            body: uploadFormData,
+          })
+
+          if (!response.ok) {
+            throw new Error("Failed to upload image")
+          }
+
+          const result = await response.json()
+          uploadedImageUrls.push(result.url)
+          console.log("[v0] Uploaded image:", result.url)
+        }
+
+        setUploadingImages(false)
+      }
+
+      const existingImages = editingListing?.images || []
+      const allImages = [...existingImages, ...uploadedImageUrls]
+
+      const listingData = {
+        ownerName: user?.name || "",
+        ownerEmail: user?.email || "",
+        ownerPhone: formData.get("phone") as string,
+        propertyAddress: formData.get("propertyAddress") as string,
+        propertyTypeAndSize: formData.get("propertyTypeAndSize") as string,
+        pricePeriodCurrency: formData.get("pricePeriodCurrency") as string,
+        hasSalaryGuarantors: formData.get("hasSalaryGuarantors") === "true",
+        guarantorsMinSalary: formData.get("guarantorsMinSalary") as string,
+        petsQuantitySizeAndType: formData.get("petsQuantitySizeAndType") as string,
+        hasLandlordGuarantors: formData.get("hasLandlordGuarantors") as string,
+        status: "published" as const,
+        description: formData.get("description") as string,
+        images: allImages,
+      }
+
+      if (editingListing) {
+        console.log("[v0] Updating listing:", editingListing.id)
+        await updateListing(editingListing.id, listingData)
+        toast({ title: "Publicación actualizada" })
+      } else {
+        console.log("[v0] Creating new listing")
+        await createListing(listingData)
+        toast({ title: "Publicación creada exitosamente" })
+      }
+
+      setShowCreateDialog(false)
+      setEditingListing(null)
+      setSelectedFiles([])
+      loadListings()
+    } catch (error) {
+      console.error("Error creating/updating listing:", error)
+      setUploadingImages(false)
+      toast({
+        title: "Error al guardar",
+        description: "No se pudo guardar la publicación",
+        variant: "destructive",
+      })
+    }
   }
 
   const handleToggleStatus = async (listing: PropertyListing) => {
@@ -102,8 +148,95 @@ function MisPublicacionesContent() {
     }
   }
 
+  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(e.target.files || [])
+
+    const validFiles = files.filter((file) => {
+      if (!file.type.startsWith("image/")) {
+        toast({
+          title: "Archivo inválido",
+          description: `${file.name} no es una imagen`,
+          variant: "destructive",
+        })
+        return false
+      }
+      return true
+    })
+
+    setSelectedFiles((prev) => [...prev, ...validFiles])
+  }
+
+  const handleRemoveSelectedFile = (index: number) => {
+    setSelectedFiles((prev) => prev.filter((_, i) => i !== index))
+  }
+
+  const handleRemoveExistingImage = (imageUrl: string) => {
+    if (!editingListing) return
+    const updatedImages = (editingListing.images || []).filter((url) => url !== imageUrl)
+    setEditingListing({ ...editingListing, images: updatedImages })
+  }
+
   const ListingForm = () => (
     <form onSubmit={handleCreateOrUpdate} className="space-y-4">
+      <div className="space-y-2">
+        <Label>Imágenes de la propiedad</Label>
+        <p className="text-sm text-muted-foreground">Seleccione imágenes desde su dispositivo (máximo 10 imágenes)</p>
+
+        {editingListing?.images && editingListing.images.length > 0 && (
+          <div>
+            <p className="text-sm font-medium mb-2">Imágenes actuales:</p>
+            <div className="grid grid-cols-3 gap-2 mb-2">
+              {editingListing.images.map((imageUrl, index) => (
+                <div key={index} className="relative aspect-video rounded-lg overflow-hidden border">
+                  <img
+                    src={imageUrl || "/placeholder.svg"}
+                    alt={`Imagen ${index + 1}`}
+                    className="object-cover w-full h-full"
+                  />
+                  <Button
+                    type="button"
+                    variant="destructive"
+                    size="sm"
+                    className="absolute top-1 right-1 h-6 w-6 p-0"
+                    onClick={() => handleRemoveExistingImage(imageUrl)}
+                  >
+                    <X className="h-4 w-4" />
+                  </Button>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {selectedFiles.length > 0 && (
+          <div>
+            <p className="text-sm font-medium mb-2">Nuevas imágenes a subir:</p>
+            <div className="grid grid-cols-3 gap-2 mb-2">
+              {selectedFiles.map((file, index) => (
+                <div key={index} className="relative aspect-video rounded-lg overflow-hidden border border-primary">
+                  <img
+                    src={URL.createObjectURL(file) || "/placeholder.svg"}
+                    alt={`Nueva imagen ${index + 1}`}
+                    className="object-cover w-full h-full"
+                  />
+                  <Button
+                    type="button"
+                    variant="destructive"
+                    size="sm"
+                    className="absolute top-1 right-1 h-6 w-6 p-0"
+                    onClick={() => handleRemoveSelectedFile(index)}
+                  >
+                    <X className="h-4 w-4" />
+                  </Button>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        <Input type="file" accept="image/*" multiple onChange={handleFileSelect} disabled={uploadingImages} />
+      </div>
+
       <div className="space-y-2">
         <Label htmlFor="propertyAddress">Dirección de la propiedad *</Label>
         <Input
@@ -211,8 +344,8 @@ function MisPublicacionesContent() {
       </div>
 
       <div className="flex gap-2">
-        <Button type="submit" className="flex-1">
-          {editingListing ? "Actualizar" : "Crear"} Publicación
+        <Button type="submit" className="flex-1" disabled={uploadingImages}>
+          {uploadingImages ? "Subiendo imágenes..." : editingListing ? "Actualizar" : "Crear"} Publicación
         </Button>
         <Button
           type="button"
@@ -220,7 +353,9 @@ function MisPublicacionesContent() {
           onClick={() => {
             setShowCreateDialog(false)
             setEditingListing(null)
+            setSelectedFiles([])
           }}
+          disabled={uploadingImages}
         >
           Cancelar
         </Button>
@@ -267,6 +402,9 @@ function MisPublicacionesContent() {
                       src={
                         listing.images?.[0] ||
                         `/placeholder.svg?height=300&width=400&query=apartment` ||
+                        "/placeholder.svg" ||
+                        "/placeholder.svg" ||
+                        "/placeholder.svg" ||
                         "/placeholder.svg" ||
                         "/placeholder.svg"
                       }
@@ -326,7 +464,10 @@ function MisPublicacionesContent() {
         open={showCreateDialog}
         onOpenChange={(open) => {
           setShowCreateDialog(open)
-          if (!open) setEditingListing(null)
+          if (!open) {
+            setEditingListing(null)
+            setSelectedFiles([])
+          }
         }}
       >
         <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">

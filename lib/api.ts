@@ -1,4 +1,5 @@
 import type { TenantUser, LandlordUser, PropertyListing, UserRole, SearchFilters } from "@/types"
+import { getIdTokenSafe, getAuthUid, signinEmailPassword } from "@/lib/auth"
 
 /**
  * API Layer - Integrated with n8n webhooks
@@ -9,40 +10,51 @@ import type { TenantUser, LandlordUser, PropertyListing, UserRole, SearchFilters
  * - /api/listings/upsert
  * - /api/users/tenant/create
  * - /api/users/owner/create
- *
- * Env vars required (client-side):
- * - NEXT_PUBLIC_N8N_BASE_URL=https://your-n8n-domain.com
- * - NEXT_PUBLIC_N8N_WEBHOOK_PATH=/webhook   (or /webhook-test in dev)
  */
 
 const STORAGE_KEYS = {
   USER: "real-estate-user",
   ROLE: "real-estate-role",
-  LISTINGS: "real-estate-listings", // kept for legacy fallback (unused when n8n is enabled)
+  LISTINGS: "real-estate-listings", // legacy fallback (unused when n8n is enabled)
 }
 
 // ---------- n8n client ----------
-const N8N_BASE_URL = process.env.NEXT_PUBLIC_N8N_BASE_URL
-const N8N_WEBHOOK_PATH = process.env.NEXT_PUBLIC_N8N_WEBHOOK_PATH || "/webhook"
-
-function assertEnv() {
-  if (!N8N_BASE_URL) {
-    throw new Error("Missing NEXT_PUBLIC_N8N_BASE_URL. Set it in .env.local or Vercel env vars.")
-  }
-}
-
 async function n8nPost<T>(path: string, body: any): Promise<T> {
+  console.log("[v0] n8nPost called with path:", path)
+
+  const token = await getIdTokenSafe()
+  console.log("[v0] Token obtained:", token ? "YES" : "NO")
+
+  if (!token) throw new Error("UNAUTHORIZED")
+
+  const authUid = await getAuthUid()
+  console.log("[v0] Auth UID:", authUid)
+
+  const bodyWithAuth = {
+    ...body,
+    authUid,
+  }
+
+  console.log("[v0] Making fetch to /api/n8n" + path)
+
   const res = await fetch(`/api/n8n${path}`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body ?? {}),
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify(bodyWithAuth),
     cache: "no-store",
   })
 
+  console.log("[v0] Response status:", res.status)
+
   const data = await res.json().catch(() => null)
+  console.log("[v0] Response data:", data)
 
   if (!res.ok) {
     const msg = (data && (data.error || data.message)) || `HTTP ${res.status}`
+    console.log("[v0] n8nPost error:", msg, "data:", data)
     throw new Error(msg)
   }
 
@@ -59,7 +71,7 @@ function toYesNo(value: boolean | string | undefined | null): "Sí" | "No" | "" 
   if (!s) return ""
   if (["si", "sí", "s", "true", "1"].includes(s)) return "Sí"
   if (["no", "n", "false", "0"].includes(s)) return "No"
-  return "" // unknown
+  return ""
 }
 
 function toBool(value: any): boolean {
@@ -79,6 +91,22 @@ function normalizeStatus(value: any): "published" | "paused" {
 }
 
 function mapN8nListingToUI(raw: any): PropertyListing {
+  console.log("[v0] mapN8nListingToUI raw images:", raw?.images, "type:", typeof raw?.images)
+
+  let images: string[] | undefined
+  if (raw?.images) {
+    if (Array.isArray(raw.images)) {
+      images = raw.images
+    } else if (typeof raw.images === "string" && raw.images.trim()) {
+      images = raw.images
+        .split(",")
+        .map((url: string) => url.trim())
+        .filter(Boolean)
+    }
+  }
+
+  console.log("[v0] mapN8nListingToUI parsed images:", images)
+
   return {
     id: String(raw?.id ?? raw?.ownerId ?? ""),
     ownerName: String(raw?.ownerName ?? raw?.name ?? ""),
@@ -93,7 +121,7 @@ function mapN8nListingToUI(raw: any): PropertyListing {
     hasLandlordGuarantors: String(raw?.hasLandlordGuarantors ?? ""),
     status: normalizeStatus(raw?.listingStatus ?? raw?.status),
     createdAt: String(raw?.createdAt ?? raw?.submittedAt ?? raw?.updatedAt ?? new Date().toISOString()),
-    images: Array.isArray(raw?.images) ? raw.images : undefined,
+    images,
     description: raw?.description ? String(raw.description) : undefined,
   }
 }
@@ -104,8 +132,9 @@ export async function loginWithRole(
   password: string,
   role: UserRole,
 ): Promise<{ success: boolean; user?: any; error?: string }> {
-  // password currently unused by n8n MVP (kept for UI compatibility)
   try {
+    await signinEmailPassword(email, password)
+
     const r = await n8nPost<{ ok: boolean; user?: any; error?: string }>("/api/login", {
       email,
       password,
@@ -121,6 +150,9 @@ export async function loginWithRole(
 
     return { success: true, user: r.user }
   } catch (e: any) {
+    if (e?.code === "auth/wrong-password" || e?.code === "auth/invalid-credential") {
+      return { success: false, error: "WRONG_PASSWORD" }
+    }
     return { success: false, error: e?.message || "LOGIN_FAILED" }
   }
 }
@@ -140,7 +172,6 @@ export async function createTenantUser(
       propertyTypeAndSize: payload.propertyTypeAndSize || "",
       pricePeriodCurrency: payload.pricePeriodCurrency || "",
 
-      // n8n MVP expects strings like "Sí"/"No"
       hasSalaryGuarantors: toYesNo(payload.hasSalaryGuarantors),
       guarantorsMinSalary: payload.guarantorsMinSalary || "",
       guarantorsCUIL: Array.isArray(payload.guarantorsCUIL) ? payload.guarantorsCUIL.join(", ") : "",
@@ -153,7 +184,6 @@ export async function createTenantUser(
 
     if (r?.ok === false) return { success: false, error: r?.tenant?.error || r?.error || "CREATE_TENANT_FAILED" }
 
-    // n8n currently may not return an id; keep UI-compatible return
     const id = String(r?.tenant?.id ?? r?.tenantId ?? r?.id ?? "")
     return { success: true, id: id || undefined }
   } catch (e: any) {
@@ -210,6 +240,8 @@ export async function createListing(
         petsQuantitySizeAndType: payload.petsQuantitySizeAndType || "",
         hasLandlordGuarantors: payload.hasLandlordGuarantors,
         listingStatus: payload.status || "published",
+        images: payload.images || [],
+        description: payload.description || "",
       },
     })
 
@@ -250,14 +282,17 @@ export async function getMyListings(): Promise<{
       .trim()
       .toLowerCase()
 
-    if (!ownerEmail) {
-      return { success: false, listings: [], error: "NOT_LOGGED_IN" }
-    }
+    if (!ownerEmail) return { success: false, listings: [], error: "NOT_LOGGED_IN" }
 
-    // Use the n8n API proxy to fetch listings by owner email
+    const token = await getIdTokenSafe()
+    if (!token) return { success: false, listings: [], error: "NOT_LOGGED_IN" }
+
     const res = await fetch(`/api/n8n/api/listings/mine?email=${encodeURIComponent(ownerEmail)}`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+      },
       body: JSON.stringify({ email: ownerEmail }),
       cache: "no-store",
     })
@@ -269,7 +304,6 @@ export async function getMyListings(): Promise<{
       return { success: true, listings }
     }
 
-    // If no listings or error, return empty array (not an error condition)
     return { success: true, listings: [] }
   } catch (e: any) {
     console.error("[v0] Error fetching my listings:", e)
@@ -281,8 +315,6 @@ export async function updateListing(
   id: string,
   updates: Partial<PropertyListing>,
 ): Promise<{ success: boolean; error?: string }> {
-  // MVP: n8n upsert usa email del owner para identificar el doc.
-  // El "id" que te pasa la UI hoy es local (mock); lo ignoramos en favor del owner actual.
   try {
     const current = getCurrentUser()
     const ownerEmail = String(current?.email ?? "")
@@ -291,7 +323,6 @@ export async function updateListing(
     if (!ownerEmail) return { success: false, error: "NOT_LOGGED_IN" }
 
     const merged: PropertyListing = {
-      // defaults to avoid undefined issues
       id: id || "",
       ownerName: String(current?.name ?? updates.ownerName ?? ""),
       ownerEmail,
@@ -317,6 +348,7 @@ export async function updateListing(
         address: String(current?.address ?? ""),
       },
       listing: {
+        id: id,
         propertyAddress: merged.propertyAddress,
         propertyTypeAndSize: merged.propertyTypeAndSize,
         pricePeriodCurrency: merged.pricePeriodCurrency,
@@ -325,6 +357,8 @@ export async function updateListing(
         petsQuantitySizeAndType: merged.petsQuantitySizeAndType || "",
         hasLandlordGuarantors: merged.hasLandlordGuarantors,
         listingStatus: merged.status || "published",
+        images: merged.images || [],
+        description: merged.description || "",
       },
     })
 
@@ -336,17 +370,13 @@ export async function updateListing(
 }
 
 export async function deleteListing(id: string): Promise<{ success: boolean; error?: string }> {
-  // MVP: no hay delete real aún -> soft delete (paused) via upsert
   return updateListing(id, { status: "paused" })
 }
 
-// Hook for future AI matching workflow
 export async function triggerAIMatching(
   tenantId: string,
   preferences: any,
 ): Promise<{ success: boolean; error?: string }> {
-  // TODO: When you expose n8n endpoint for match, wire it here.
-  // e.g. POST /api/match
   console.log("[v0] AI Matching hook ready. tenantId:", tenantId, "prefs:", preferences)
   return { success: true }
 }
@@ -368,7 +398,6 @@ export function logout() {
   localStorage.removeItem(STORAGE_KEYS.ROLE)
 }
 
-// ---------- legacy helper (kept for safety; not used when n8n is enabled) ----------
 function getStoredListings(): PropertyListing[] {
   if (typeof window === "undefined") return []
   const stored = localStorage.getItem(STORAGE_KEYS.LISTINGS)

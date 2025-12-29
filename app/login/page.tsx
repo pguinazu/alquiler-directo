@@ -45,10 +45,13 @@ export default function LoginPage() {
           router.push("/admin")
         }
       } else {
+        const errorMessage =
+          result.error === "WRONG_PASSWORD" ? "Contraseña incorrecta" : result.error || "Error al iniciar sesión"
+
         toast({
           variant: "destructive",
           title: "Error",
-          description: result.error || "Error al iniciar sesión",
+          description: errorMessage,
         })
       }
     } catch (error) {
@@ -85,7 +88,7 @@ export default function LoginPage() {
           <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-full bg-primary">
             <Building2 className="h-6 w-6 text-primary-foreground" />
           </div>
-          <CardTitle className="text-2xl">Bienvenido a InmoApp</CardTitle>
+          <CardTitle className="text-2xl">Bienvenido a Alquiler Directo</CardTitle>
           <CardDescription>Ingresá con tu rol para continuar</CardDescription>
         </CardHeader>
         <CardContent>
