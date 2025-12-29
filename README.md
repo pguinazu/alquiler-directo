@@ -1,6 +1,6 @@
-# 🏠 InmoApp - Portal Inmobiliario
+# 🏠 Alquiler Directo
 
-Una plataforma moderna para alquiler y venta de propiedades con sistema de matching inteligente.
+Una plataforma moderna para alquiler directo (sin intermediarios) de propiedades con sistema de matching inteligente.
 
 **Construcción**: Next.js 16 | React 19 | TypeScript | Tailwind CSS | Firebase
 
